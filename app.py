@@ -78,17 +78,22 @@ if check_password():
         st.subheader("⚡ クイックナビゲーション")
         q_col1, q_col2, q_col3 = st.columns(3)
         with q_col1:
-            st.info("🔍 **在庫詳細検索**\nロケや製品名、期間での柔軟な絞り込み")
+            st.info("🔍 **在庫詳細検索・CSV一括取り込み**\nロケや製品名での絞り込み＆在庫データ更新")
         with q_col2:
             st.success("📋 **出荷データ取り込み**\nCSV指示書からロケ順ピッキングリスト作成")
         with q_col3:
             st.warning("📥 **入荷予定・検品**\n入荷指示の受入と実在庫自動反映")
 
     # ---------------------------------------------------------
-    # メニュー2: 🔍 在庫管理（詳細検索・履歴・棚卸）
+    # メニュー2: 🔍 在庫管理（詳細検索・履歴・棚卸・CSV取り込み）
     # ---------------------------------------------------------
     elif menu == "🔍 在庫管理":
-        sub_tab1, sub_tab2, sub_tab3 = st.tabs(["🔎 在庫詳細検索", "📜 受払履歴（入出庫追跡）", "📋 棚卸（全棚・日々棚）"])
+        sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs([
+            "🔎 在庫詳細検索", 
+            "📥 在庫CSV一括取り込み", 
+            "📜 受払履歴（入出庫追跡）", 
+            "📋 棚卸（全棚・日々棚）"
+        ])
 
         # タブ1: 在庫詳細検索
         with sub_tab1:
@@ -102,22 +107,22 @@ if check_password():
                     src_code = st.text_input("商品コード", "")
                 with c2:
                     src_name = st.text_input("商品名 (部分一致)", "")
-                    src_qual = st.selectbox("品質区分", ["すべて"] + list(df["品質区分名"].unique()))
+                    src_qual = st.selectbox("品質区分", ["すべて"] + list(df["品質区分名"].unique()) if "品質区分名" in df.columns else ["すべて"])
                 with c3:
                     stock_flag = st.radio("在庫有無", ["すべて", "未引当ありのみ", "引当済ありのみ"], horizontal=True)
 
             filtered_df = df.copy()
-            if src_loc:
-                filtered_df = filtered_df[filtered_df["ロケ名"].str.contains(src_loc, case=False, na=False)]
-            if src_code:
-                filtered_df = filtered_df[filtered_df["商品コード"].str.contains(src_code, case=False, na=False)]
-            if src_name:
-                filtered_df = filtered_df[filtered_df["商品名1"].str.contains(src_name, case=False, na=False)]
-            if src_qual != "すべて":
+            if src_loc and "ロケ名" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["ロケ名"].astype(str).str.contains(src_loc, case=False, na=False)]
+            if src_code and "商品コード" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["商品コード"].astype(str).str.contains(src_code, case=False, na=False)]
+            if src_name and "商品名1" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["商品名1"].astype(str).str.contains(src_name, case=False, na=False)]
+            if src_qual != "すべて" and "品質区分名" in filtered_df.columns:
                 filtered_df = filtered_df[filtered_df["品質区分名"] == src_qual]
-            if stock_flag == "未引当ありのみ":
+            if stock_flag == "未引当ありのみ" and "未引当数" in filtered_df.columns:
                 filtered_df = filtered_df[filtered_df["未引当数"] > 0]
-            elif stock_flag == "引当済ありのみ":
+            elif stock_flag == "引当済ありのみ" and "引当済数" in filtered_df.columns:
                 filtered_df = filtered_df[filtered_df["引当済数"] > 0]
 
             st.write(f"検索結果: **{len(filtered_df)}** 件")
@@ -127,8 +132,21 @@ if check_password():
             csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 検索結果をCSVダウンロード", data=csv, file_name="inventory_search.csv", mime="text/csv")
 
-        # タブ2: 受払履歴
+        # タブ2: 在庫CSV一括取り込み（復元機能）
         with sub_tab2:
+            st.subheader("📥 既存在庫CSVデータの取り込み（データ更新）")
+            st.caption("お持ちの『在庫_明細.csv』等をアップロードして、システム上の在庫データベースを一括更新します。")
+            uploaded_file = st.file_uploader("在庫CSVファイルを選択してください", type=["csv"], key="inv_upload")
+            if uploaded_file is not None:
+                new_df = pd.read_csv(uploaded_file)
+                st.write("▼ 取り込みデータのプレビュー")
+                st.dataframe(new_df.head(), use_container_width=True)
+                if st.button("💾 データベースに反映（上書き更新）"):
+                    st.session_state["inventory_db"] = new_df
+                    st.success("在庫データベースの更新が完了しました！")
+
+        # タブ3: 受払履歴
+        with sub_tab3:
             st.subheader("📜 受払履歴 追跡検索")
             hist_df = st.session_state["history_db"].copy()
 
@@ -139,7 +157,7 @@ if check_password():
                 h_kbn = st.selectbox("区分絞り込み", ["すべて", "入荷", "出荷", "移動", "棚卸"])
 
             if h_name:
-                hist_df = hist_df[hist_df["商品コード"].str.contains(h_name, case=False, na=False) | hist_df["商品名1"].str.contains(h_name, case=False, na=False)]
+                hist_df = hist_df[hist_df["商品コード"].astype(str).str.contains(h_name, case=False, na=False) | hist_df["商品名1"].astype(str).str.contains(h_name, case=False, na=False)]
             if h_kbn != "すべて":
                 hist_df = hist_df[hist_df["区分"] == h_kbn]
 
@@ -147,14 +165,15 @@ if check_password():
             csv_h = hist_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 履歴データをCSVダウンロード", data=csv_h, file_name="history_log.csv", mime="text/csv")
 
-        # タブ3: 棚卸
-        with sub_tab3:
+        # タブ4: 棚卸
+        with sub_tab4:
             st.subheader("📋 棚卸処理 (全棚 / 日々棚)")
             t_type = st.radio("棚卸種別", ["日々棚卸 (エリア・商品指定)", "全棚棚卸"], horizontal=True)
             st.info("帳簿上の実数と実カウントを入力し、差分を確定します。")
             
+            show_cols = [c for c in ["ロケ名", "商品コード", "商品名1", "未引当数"] if c in st.session_state["inventory_db"].columns]
             stock_edit_df = st.data_editor(
-                st.session_state["inventory_db"][["ロケ名", "商品コード", "商品名1", "未引当数"]],
+                st.session_state["inventory_db"][show_cols],
                 key="inventory_editor",
                 use_container_width=True
             )
@@ -181,26 +200,29 @@ if check_password():
                     inv_df = st.session_state["inventory_db"].copy()
                     picking_res = []
 
-                    qty_col = "出荷希望数" if "出荷希望数" in ship_df.columns else "数量"
+                    qty_col = "出荷希望数" if "出荷希望数" in ship_df.columns else ("数量" if "数量" in ship_df.columns else None)
 
-                    for idx, row in ship_df.iterrows():
-                        p_code = str(row["商品コード"])
-                        req_qty = int(row[qty_col])
-                        match = inv_df[inv_df["商品コード"].astype(str) == p_code]
+                    if qty_col is None or "商品コード" not in ship_df.columns:
+                        st.error("CSV内に『商品コード』および『出荷希望数（または数量）』列が見つかりません。")
+                    else:
+                        for idx, row in ship_df.iterrows():
+                            p_code = str(row["商品コード"])
+                            req_qty = int(row[qty_col])
+                            match = inv_df[inv_df["商品コード"].astype(str) == p_code]
 
-                        if match.empty:
-                            picking_res.append({"ロケ名": "【欠品】", "商品コード": p_code, "商品名1": "不明", "指示数": req_qty, "状態": "在庫なし"})
-                        else:
-                            for _, inv_r in match.iterrows():
-                                picking_res.append({
-                                    "ロケ名": inv_r["ロケ名"], "商品コード": p_code,
-                                    "商品名1": inv_r["商品名1"], "指示数": req_qty,
-                                    "現在未引当": inv_r["未引当数"], "状態": "OK" if inv_r["未引当数"] >= req_qty else "不足注意"
-                                })
+                            if match.empty:
+                                picking_res.append({"ロケ名": "【欠品】", "商品コード": p_code, "商品名1": "不明", "指示数": req_qty, "状態": "在庫なし"})
+                            else:
+                                for _, inv_r in match.iterrows():
+                                    picking_res.append({
+                                        "ロケ名": inv_r["ロケ名"], "商品コード": p_code,
+                                        "商品名1": inv_r.get("商品名1", ""), "指示数": req_qty,
+                                        "現在未引当": inv_r.get("未引当数", 0), "状態": "OK" if inv_r.get("未引当数", 0) >= req_qty else "不足注意"
+                                    })
 
-                    res_df = pd.DataFrame(picking_res).sort_values(by="ロケ名")
-                    st.session_state["last_picking"] = res_df
-                    st.success("ピッキングリストを作成しました！")
+                        res_df = pd.DataFrame(picking_res).sort_values(by="ロケ名")
+                        st.session_state["last_picking"] = res_df
+                        st.success("ピッキングリストを作成しました！")
 
             if "last_picking" in st.session_state:
                 st.markdown("---")
@@ -213,7 +235,6 @@ if check_password():
             st.subheader("🔍 出荷履歴・データ詳細検索")
             st.text_input("製品名 / 出荷IDで検索")
             st.date_input("出荷日範囲指定", (date.today(), date.today()))
-            st.caption("※出荷実績履歴データがここに表示されます。")
 
     # ---------------------------------------------------------
     # メニュー4: 📥 入荷管理
