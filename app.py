@@ -1,8 +1,18 @@
 import streamlit as st
 import pandas as pd
+import os
 from datetime import datetime, date
 
 st.set_page_config(page_title="倉庫基幹システム (WMS)", layout="wide")
+
+CSV_FILE_PATH = "saved_inventory.csv"
+
+# 初期サンプルデータ定義
+DEFAULT_INVENTORY = pd.DataFrame([
+    {"ロケ名": "3C-1-4-4", "商品コード": "755851", "JANコード": "4901234567891", "商品名1": "コーナン インナークッション", "引当済数": 0, "未引当数": 10, "在庫日": "2026/06/05", "品質区分名": "良品"},
+    {"ロケ名": "3B-T4-2-4", "商品コード": "273386", "JANコード": "4901234567892", "商品名1": "レンジマグカップ ブラウン", "引当済数": 0, "未引当数": 163, "在庫日": "2026/06/16", "品質区分名": "良品"},
+    {"ロケ名": "3B-T5-2-4", "商品コード": "121186", "JANコード": "4901234567893", "商品名1": "モデルナ IHウォックパン 20cm", "引当済数": 2, "未引当数": 69, "在庫日": "2026/06/08", "品質区分名": "良品"}
+])
 
 # 1. ログイン認証
 def check_password():
@@ -24,13 +34,15 @@ def check_password():
     return True
 
 if check_password():
-    # 2. 初期データセットアップ（セッション状態管理）
+    # 2. データの読み込み・保持（ファイルが存在すれば優先読み込み）
     if "inventory_db" not in st.session_state:
-        st.session_state["inventory_db"] = pd.DataFrame([
-            {"ロケ名": "3C-1-4-4", "商品コード": "755851", "JANコード": "4901234567891", "商品名1": "コーナン インナークッション", "引当済数": 0, "未引当数": 10, "在庫日": "2026/06/05", "品質区分名": "良品"},
-            {"ロケ名": "3B-T4-2-4", "商品コード": "273386", "JANコード": "4901234567892", "商品名1": "レンジマグカップ ブラウン", "引当済数": 0, "未引当数": 163, "在庫日": "2026/06/16", "品質区分名": "良品"},
-            {"ロケ名": "3B-T5-2-4", "商品コード": "121186", "JANコード": "4901234567893", "商品名1": "モデルナ IHウォックパン 20cm", "引当済数": 2, "未引当数": 69, "在庫日": "2026/06/08", "品質区分名": "良品"}
-        ])
+        if os.path.exists(CSV_FILE_PATH):
+            try:
+                st.session_state["inventory_db"] = pd.read_csv(CSV_FILE_PATH)
+            except Exception:
+                st.session_state["inventory_db"] = DEFAULT_INVENTORY
+        else:
+            st.session_state["inventory_db"] = DEFAULT_INVENTORY
 
     if "history_db" not in st.session_state:
         st.session_state["history_db"] = pd.DataFrame([
@@ -62,17 +74,22 @@ if check_password():
     )
 
     # ---------------------------------------------------------
-    # メニュー1: 🏠 ポータル（ダッシュボード）
+    # メニュー1: 🏠 ポータル
     # ---------------------------------------------------------
     if menu == "🏠 ポータル":
         st.subheader("📊 倉庫運用サマリー")
         inv_df = st.session_state["inventory_db"]
         
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("総SKU数", len(inv_df["商品コード"].unique()))
-        col2.metric("総フリー在庫数", int(inv_df["未引当数"].sum()))
-        col3.metric("総引当済数", int(inv_df["引当済数"].sum()))
-        col4.metric("総ロケーション数", len(inv_df["ロケ名"].unique()))
+        sku_cnt = len(inv_df["商品コード"].unique()) if "商品コード" in inv_df.columns else 0
+        free_qty = int(inv_df["未引当数"].sum()) if "未引当数" in inv_df.columns else 0
+        alloc_qty = int(inv_df["引当済数"].sum()) if "引当済数" in inv_df.columns else 0
+        loc_cnt = len(inv_df["ロケ名"].unique()) if "ロケ名" in inv_df.columns else 0
+
+        col1.metric("総SKU数", sku_cnt)
+        col2.metric("総フリー在庫数", free_qty)
+        col3.metric("総引当済数", alloc_qty)
+        col4.metric("総ロケーション数", loc_cnt)
 
         st.markdown("---")
         st.subheader("⚡ クイックナビゲーション")
@@ -85,7 +102,7 @@ if check_password():
             st.warning("📥 **入荷予定・検品**\n入荷指示の受入と実在庫自動反映")
 
     # ---------------------------------------------------------
-    # メニュー2: 🔍 在庫管理（詳細検索・履歴・棚卸・CSV取り込み）
+    # メニュー2: 🔍 在庫管理
     # ---------------------------------------------------------
     elif menu == "🔍 在庫管理":
         sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs([
@@ -107,7 +124,8 @@ if check_password():
                     src_code = st.text_input("商品コード", "")
                 with c2:
                     src_name = st.text_input("商品名 (部分一致)", "")
-                    src_qual = st.selectbox("品質区分", ["すべて"] + list(df["品質区分名"].unique()) if "品質区分名" in df.columns else ["すべて"])
+                    qual_list = ["すべて"] + list(df["品質区分名"].unique()) if "品質区分名" in df.columns else ["すべて"]
+                    src_qual = st.selectbox("品質区分", qual_list)
                 with c3:
                     stock_flag = st.radio("在庫有無", ["すべて", "未引当ありのみ", "引当済ありのみ"], horizontal=True)
 
@@ -128,22 +146,33 @@ if check_password():
             st.write(f"検索結果: **{len(filtered_df)}** 件")
             st.dataframe(filtered_df, use_container_width=True)
 
-            # CSVダウンロード
             csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 検索結果をCSVダウンロード", data=csv, file_name="inventory_search.csv", mime="text/csv")
 
-        # タブ2: 在庫CSV一括取り込み（復元機能）
+        # タブ2: 在庫CSV一括取り込み（永続保存機能付き）
         with sub_tab2:
-            st.subheader("📥 既存在庫CSVデータの取り込み（データ更新）")
-            st.caption("お持ちの『在庫_明細.csv』等をアップロードして、システム上の在庫データベースを一括更新します。")
+            st.subheader("📥 既存在庫CSVデータの取り込み（完全保存）")
+            st.caption("CSVをアップロードして確定を押すと、サーバー上にファイルとして永久保存されます。")
             uploaded_file = st.file_uploader("在庫CSVファイルを選択してください", type=["csv"], key="inv_upload")
+            
             if uploaded_file is not None:
                 new_df = pd.read_csv(uploaded_file)
                 st.write("▼ 取り込みデータのプレビュー")
                 st.dataframe(new_df.head(), use_container_width=True)
-                if st.button("💾 データベースに反映（上書き更新）"):
+                
+                if st.button("💾 データベースに反映＆永久保存"):
+                    # セッション更新 ＋ ローカルCSVへ書き出し
                     st.session_state["inventory_db"] = new_df
-                    st.success("在庫データベースの更新が完了しました！")
+                    new_df.to_csv(CSV_FILE_PATH, index=False)
+                    st.success("🎉 在庫データベースの更新および保存が完了しました！ブラウザを再読み込みしても保持されます。")
+
+            if os.path.exists(CSV_FILE_PATH):
+                if st.button("⚠️ 初期データにリセットする"):
+                    if os.path.exists(CSV_FILE_PATH):
+                        os.remove(CSV_FILE_PATH)
+                    st.session_state["inventory_db"] = DEFAULT_INVENTORY
+                    st.success("初期状態にリセットしました。")
+                    st.rerun()
 
         # タブ3: 受払履歴
         with sub_tab3:
@@ -179,7 +208,8 @@ if check_password():
             )
             if st.button("⚖️ 棚卸実績を確定・在庫更新"):
                 st.session_state["inventory_db"]["未引当数"] = stock_edit_df["未引当数"]
-                st.success("棚卸結果をデータベースに反映しました！")
+                st.session_state["inventory_db"].to_csv(CSV_FILE_PATH, index=False)
+                st.success("棚卸結果をデータベースに反映・保存しました！")
 
     # ---------------------------------------------------------
     # メニュー3: 📋 出荷管理
